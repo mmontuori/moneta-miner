@@ -1,30 +1,40 @@
 #!/bin/bash -e
+#
+# miner.sh: bootstraps Moneta mining via docker
+#
+# Use the help command line option to show all the options
+#
+# Copyright (c) 2021 Michael Montuori
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
-# change the following variables to match your new coin
-COIN_NAME="Moneta"
-COIN_UNIT="MNTA"
-# 42 million coins at total (litecoin total supply is 84000000)
-# TOTAL_SUPPLY=420000000
-MAINNET_PORT="47890"
-TESTNET_PORT="47891"
-REGTEST_PORT="47892"
-# leave CHAIN empty for main network, -regtest for regression network and -testnet for test network
-CHAIN="-regtest"
-# CHAIN="-testnet"
-# CHAIN=""
-ACCEPT_MINERS=false
+if test -f moneta.env; then
+    source moneta.env
+else
+    echo "ERROR: moneta-env Environment file not found. Cannot continue"
+    exit 1
+fi
 
-# dont change the following variables unless you know what you are doing
-MONETA_BRANCH=0.18
-GENESISHZERO_REPOS=https://github.com/mmontuori/GenesisH0.git
-LITECOIN_REPOS=https://github.com/mmontuori/moneta.git
-COIN_NAME_LOWER=$(echo $COIN_NAME | tr '[:upper:]' '[:lower:]')
-COIN_NAME_UPPER=$(echo $COIN_NAME | tr '[:lower:]' '[:upper:]')
-COIN_UNIT_LOWER=$(echo $COIN_UNIT | tr '[:upper:]' '[:lower:]')
-DIRNAME=$(dirname $0)
-DOCKER_NETWORK="172.18.0"
-DOCKER_IMAGE_LABEL="mnta-env"
-OSVERSION="$(uname -s)"
+if [ "$CHAIN" == "" ]; then
+    echo "ERROR: CHAIN value has to be set. Edit file moneta.env"
+    exit 1
+fi
 
 docker_build_image()
 {
@@ -67,17 +77,10 @@ EOF
     fi
 }
 
-docker_run_genesis()
-{
-    mkdir -p $DIRNAME/.ccache
-    docker run -v $DIRNAME/GenesisH0:/GenesisH0 $DOCKER_IMAGE_LABEL /bin/bash -c "$1"
-}
-
 docker_run()
 {
     mkdir -p $DIRNAME/.ccache
     docker run \
-    -v $DIRNAME/GenesisH0:/GenesisH0 \
     -v $DIRNAME/.ccache:/root/.ccache \
     -v $DIRNAME/$COIN_NAME_LOWER:/$COIN_NAME_LOWER $DOCKER_IMAGE_LABEL \
     /bin/bash -c "$1"
@@ -101,20 +104,6 @@ docker_remove_nodes()
     for id in $(docker ps -q -a  -f ancestor=$DOCKER_IMAGE_LABEL); do
         docker rm $id
     done
-}
-
-docker_create_network()
-{
-    echo "Creating docker network"
-    if ! docker network inspect newcoin &>/dev/null; then
-        docker network create --subnet=$DOCKER_NETWORK.0/16 newcoin
-    fi
-}
-
-docker_remove_network()
-{
-    echo "Removing docker network"
-    docker network rm newcoin
 }
 
 docker_run_node()
@@ -144,9 +133,7 @@ EOF
     fi
 
     docker run \
-    --net newcoin \
     $port_cmd \
-    --ip $DOCKER_NETWORK.${NODE_NUMBER} \
     -v $DIRNAME/miner${NODE_NUMBER}:/root/.$COIN_NAME_LOWER \
     -v $DIRNAME/$COIN_NAME_LOWER:/$COIN_NAME_LOWER $DOCKER_IMAGE_LABEL \
     /bin/bash -c "$NODE_COMMAND"
@@ -158,17 +145,17 @@ clone_repo()
         echo "Warning: $COIN_NAME_LOWER already existing. Not replacing any values"
         return 0
     fi
-    if [ ! -d "moneta-master" ]; then
-        # clone litecoin and keep local cache
-        git clone -b $MONETA_BRANCH $LITECOIN_REPOS moneta-master
+    if [ ! -d "${COIN_NAME_LOWER}-master" ]; then
+        # clone moneta and keep local cache
+        git clone -b $MONETA_BRANCH $MONETA_REPOS ${COIN_NAME_LOWER}-master
     else
         echo "Updating master branch"
-        pushd moneta-master
+        pushd ${COIN_NAME_LOWER}-master
         git pull
         popd
     fi
 
-    git clone -b $MONETA_BRANCH moneta-master $COIN_NAME_LOWER
+    git clone -b $MONETA_BRANCH ${COIN_NAME_LOWER}-master $COIN_NAME_LOWER
 
 }
 
@@ -230,16 +217,18 @@ case $1 in
         docker_remove_nodes
     ;;
     clean_up)
-        docker_stop_nodes
+        if [ -n "$(docker ps -q -f ancestor=$DOCKER_IMAGE_LABEL)" ]; then
+            echo "There are nodes running. Please stop them first with: $0 stop"
+            exit 1
+        fi
         for i in $(seq 2 5); do
            docker_run_node $i "rm -rf /$COIN_NAME_LOWER /root/.$COIN_NAME_LOWER" &>/dev/null
         done
         docker_remove_nodes
-        docker_remove_network
         rm -rf $COIN_NAME_LOWER
-        if [ "$2" != "keep_genesis_block" ]; then
-            rm -f GenesisH0/${COIN_NAME}-*.txt
-        fi
+        rm -fr $DOCKER_IMAGE_LABEL
+        rm -fr ${COIN_NAME_LOWER}-master
+        echo "directory .ccache has to be cleaned manually as root"
         for i in $(seq 2 5); do
            rm -rf miner$i
         done
@@ -270,7 +259,7 @@ Usage: $0 (start|stop|remove_nodes|clean_up)
  - start: start a single instance miner
  - stop: simply stop the containers without removing them
  - remove_nodes: remove the old docker container images. This will stop them first if necessary.
- - clean_up: WARNING: this will stop and remove docker containers and network, source code, genesis block information and nodes data directory. (to start from scratch)
+ - clean_up: WARNING: this will stop and remove docker containers and network, source code, and nodes data directory. (to start from scratch)
 EOF
     ;;
 esac
