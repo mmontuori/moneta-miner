@@ -36,6 +36,47 @@ if [ "$CHAIN" == "" ]; then
     exit 1
 fi
 
+docker_build_image_new()
+{
+    IMAGE=$(docker images -q $DOCKER_IMAGE_LABEL)
+    if [ -z $IMAGE ]; then
+        echo Building docker image
+        if [ ! -f $DOCKER_IMAGE_LABEL/Dockerfile ]; then
+            mkdir -p $DOCKER_IMAGE_LABEL
+            cat <<EOF > $DOCKER_IMAGE_LABEL/Dockerfile
+FROM ubuntu:18.04
+#ENV DEBIAN_FRONTEND noninteractive
+#ENV DEBCONF_NONINTERACTIVE_SEEN true
+#RUN truncate -s0 /tmp/preseed.cfg
+#RUN echo "tzdata tzdata/Areas select America" >> /tmp/preseed.cfg
+#RUN echo "tzdata tzdata/Zones/America select New_York" >> /tmp/preseed.cfg
+#RUN debconf-set-selections /tmp/preseed.cfg
+#RUN rm -f /etc/timezone /etc/localtime
+RUN apt update
+#RUN apt install -y tzdata
+#RUN apt install -y libterm-readline-gnu-perl
+#RUN apt install -y apt-utils
+#RUN apt install -y gnupg
+RUN apt -y upgrade
+RUN apt install -y build-essential libboost-all-dev libssl-dev libtool autotools-dev automake pkg-config bsdmainutils python3 software-properties-common
+RUN echo deb http://ppa.launchpad.net/bitcoin/bitcoin/ubuntu xenial main >> /etc/apt/sources.list
+RUN sleep 10;apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv D46F45428842CE5E
+RUN apt update
+RUN apt-get install -y ccache git libboost-system1.62.0 libboost-filesystem1.62.0 libboost-program-options1.62.0 libboost-thread1.62.0 libboost-chrono1.62.0 libssl1.1 libevent-pthreads-2.1.6 libevent-2.1.6 build-essential libssl-dev libevent-dev libboost-system-dev libboost-filesystem-dev libboost-chrono-dev libboost-program-options-dev libboost-test-dev libboost-thread-dev libdb4.8-dev libdb4.8++-dev libminiupnpc-dev libzmq3-dev
+RUN apt-get install -y libqt5core5a libqt5dbus5 qttools5-dev qttools5-dev-tools libprotobuf-dev protobuf-compiler libqrencode-dev libqt5gui5
+RUN apt-get install -y python-pip iputils-ping net-tools libboost-all-dev curl
+RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+#RUN curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py
+#RUN python2 get-pip.py
+RUN pip install construct==2.5.2 scrypt
+EOF
+        fi
+        docker build --label $DOCKER_IMAGE_LABEL --tag $DOCKER_IMAGE_LABEL $DIRNAME/$DOCKER_IMAGE_LABEL/
+    else
+        echo Docker image already built
+    fi
+}
+
 docker_build_image()
 {
     IMAGE=$(docker images -q $DOCKER_IMAGE_LABEL)
@@ -234,7 +275,7 @@ case $1 in
         done
     ;;
     prepare)
-        docker_build_image
+        docker_build_image_new
         clone_repo 
         build_moneta
     ;;
