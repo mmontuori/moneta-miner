@@ -31,7 +31,7 @@ else
     exit 1
 fi
 
-if [ "$CHAIN" == "" ]; then
+if [ "CHAIN" == "" ]; then
     echo "ERROR: CHAIN value has to be set. Edit file moneta.env"
     exit 1
 fi
